@@ -1,0 +1,506 @@
+<html>
+
+<head>
+
+    <title>Accounts on Bing Maps</title>
+
+    <script type="text/javascript" src="https://ecn.dev.virtualearth.net/mapcontrol/mapcontrol.ashx?v=7.0&s=1"></script>
+    <script type="text/javascript" src="ClientGlobalContext.js.aspx"></script>
+    <script type="text/javascript" src="new_jquery1.8.2.min.js"></script>
+    <script type="text/javascript" src="new_CrmFetchKit.js"></script>
+
+    <script type="text/javascript">
+   
+        var BingMapsKey = "";
+        var searchManager = null;
+        var map = null;
+        var locs = [];
+
+        function addPins(entityType, entities) {
+            var i = -1;
+            while (i++ < entities.length - 1) {   //if (entities[i].attributes) {
+                //    if (entityType == "account" || entityType == "contact") {
+                var line1 = (entities[i].attributes.address1_line1) ? entities[i].attributes.address1_line1.value : "-";
+                var city = (entities[i].attributes.address1_city) ? entities[i].attributes.address1_city.value : "-";
+                var province = (entities[i].attributes.address1_stateorprovince) ? entities[i].attributes.address1_stateorprovince.value : "-";
+                var postcode = (entities[i].attributes.address1_postalcode) ? entities[i].attributes.address1_postalcode.value : "-";
+                if (entityType == "account") {
+                    var accountName = (entities[i].attributes.name) ? entities[i].attributes.name.value : "-";
+                }
+                else if (entityType == "contact") {
+                    var accountName = (entities[i].attributes.fullname) ? entities[i].attributes.fullname.value : "-";
+                }
+                //  }
+                //else if (entityType == "new_callplanitem") {
+                //  var line1 = (entities[i].attributes.new_street1) ? entities[i].attributes.new_street1.value : "-";
+                //                    var city = (entities[i].attributes.new_city) ? entities[i].attributes.new_city.value : "-";
+                //                    var province = (entities[i].attributes.new_province) ? entities[i].attributes.new_province.value : "-";
+                //                    var postcode = (entities[i].attributes.new_postalcode) ? entities[i].attributes.new_postalcode.value : "-";
+                //                    var accountName = (entities[i].attributes.regardingobjectid) ? entities[i].attributes.regardingobjectid.name : "-";
+                //                }
+                var id = entities[i].Id;
+                //var url = "http://biosyent.crm.dynamics.com/main.aspx?etn=account&pagetype=entityrecord&id=%7B" + id + "%7D";
+
+                var search = line1 + "," + city + "," + province + "," + postcode;
+
+                var last = (i == entities.length - 1) ? true : false;
+                geocodeRequest(search, accountName, id, last, search, entityType);
+                //}
+            }
+        }
+
+        function createSearchManager() {
+            if (!searchManager) {
+                map.addComponent('searchManager', new Microsoft.Maps.Search.SearchManager(map));
+                searchManager = map.getComponent('searchManager');
+                //displayAlert('Search module loaded'); 
+            }
+        }
+
+        function geocodeRequest(where, accountName, id, last, address, type) {
+            createSearchManager();
+            var userData = { name: accountName, id: id, last: last, address: address, type: type };
+            var request =
+            {
+                where: where,
+                count: 5,
+                bounds: map.getBounds(),
+                callback: onGeocodeSuccess,
+                errorCallback: onGeocodeFailed,
+                userData: userData
+            };
+            searchManager.geocode(request);
+        }
+
+        function onGeocodeSuccess(result, userData) {
+            if (result) {
+                //  map.entities.clear(); 
+                var topResult = result.results && result.results[0];
+                if (topResult) {
+                    var pushpin = new Microsoft.Maps.Pushpin(topResult.location, null);
+                    locs.push(topResult.location);
+                    //  var pushpinClick= Microsoft.Maps.Events.addHandler(pushpin, 'click', onClickHandler(userData.name, userData.id));
+                    map.entities.push(pushpin);
+                    map.entities.push(new Microsoft.Maps.Infobox(topResult.location,
+                    {
+                        title: userData.name,
+                        pushpin: pushpin,
+                        description: userData.address,
+                        titleClickHandler: function () {
+                            Xrm.Utility.openEntityForm(userData.type, userData.id, null);
+                        }
+                    }))
+                }
+            }
+            if (userData.last) {
+                var bestview = Microsoft.Maps.LocationRect.fromLocations(locs);
+                map.setView({ bounds: bestview });
+            }
+        }
+
+        function onClickHandler(name, id) {
+            Xrm.Utility.openEntityForm(name, id, null);
+        }
+
+        function onGeocodeFailed(result, userData) {
+            //displayAlert('Geocode failed'); 
+        }
+
+        function loadRecords(entity) {
+
+            try {
+                if (!parent.effectiveFetchXml) {
+                    var fetchDecoded = parent.$find("crmGrid").GetParameter("effectiveFetchXml");
+                }
+                else {
+                    var fetchDecoded = parent.effectiveFetchXml.getAttribute("value");
+                }
+
+                var fetchXML;
+                if (window.DOMParser) {
+                    parser = new DOMParser();
+                    fetchXML = parser.parseFromString(fetchDecoded, "text/xml");
+                }
+                else { //Internet Explorer
+                    fetchXML = new ActiveXObject("Microsoft.XMLDOM");
+                    fetchXML.async = false;
+                    fetchXML.loadXML(fetchDecoded);
+                }
+
+                var filterXML = fetchXML.getElementsByTagName("filter");
+                var orderXML = fetchXML.getElementsByTagName("order");
+
+                var filterText = "";
+                for (var k = 0; k < filterXML.length; k++) {
+                    filterText += (new XMLSerializer()).serializeToString(filterXML[k]);
+                }
+                //alert(filterText);
+                var orderText = "";
+                for (var j = 0; j < orderXML.length; j++) {
+                    orderText += (new XMLSerializer()).serializeToString(orderXML[j]);
+                }
+
+                //alert(orderText);
+                var entityname = "";
+                if (entity == "account") {
+                    entityname = "name";
+                }
+                else if (entity == "contact") {
+                    entityname = "fullname";
+                }
+                //  else if (entity == "new_callplanitem") {
+                //    entityname = "regardingobjectid";
+                //}
+
+                var fetchCount = 50;
+                var fetchHeader = '<fetch version="1.0" output-format="xml-platform" ' + 'mapping="logical" ' + 'count="' + fetchCount.toString() + '">';
+                var fetchEntity = ' <entity name="' + entity + '">' + ' <attribute name="' + entityname + '" />';
+                //   if (entity == "new_callplanitem") {
+                //     var fetchAttributes = ' <attribute name="new_city" />' + ' <attribute name="new_street1" />' + ' <attribute name="new_province" />' + ' <attribute name="new_postalcode" />';
+                //}
+                //else {
+                var fetchAttributes = ' <attribute name="address1_city" />' + ' <attribute name="address1_line1" />' + ' <attribute name="address1_stateorprovince" />' + ' <attribute name="address1_postalcode" />';
+                //}
+                var fetchFooter = ' </entity>' + '</fetch>';
+
+                var myfetchxml = fetchHeader + fetchEntity + fetchAttributes + filterText + orderText + fetchFooter;
+                // alert(myfetchxml);
+                /*
+                var myfetchxml = ['<fetch version="1.0" output-format="xml-platform" ',
+                    'mapping="logical" ',
+                    'count="50">',
+                    ' <entity name="' + entity + '">',
+                    ' <attribute name="' + entityname + '" />',
+                    ' <attribute name="address1_city" />',
+                    ' <attribute name="address1_line1" />',
+                    ' <attribute name="address1_stateorprovince" />',
+                    ' <attribute name="address1_postalcode" />',
+                    filterText,
+                    orderText,
+                    ' </entity>',
+                    '</fetch>'].join('');
+
+                if (entity == "new_callplanitem") {
+                    var myfetchxml = ['<fetch version="1.0" output-format="xml-platform" ',
+                      'mapping="logical" ',
+                      'count="50">',
+                      ' <entity name="new_callplanitem">',
+                      ' <attribute name="regardingobjectid" />',
+                      ' <attribute name="new_city" />',
+                      ' <attribute name="new_street1" />',
+                      ' <attribute name="new_province" />',
+                      ' <attribute name="new_postalcode" />',
+                      filterText,
+                      orderText,
+                      ' </entity>',
+                      '</fetch>'].join('');
+                }
+                */
+                //CrmFetchKit.FetchMore(myfetchxml).then(function (response) {
+                ExecuteFetchXmlRequest(myfetchxml, function (response) {
+                    addPins(entity, response.entities);
+                    //var firstName = entities[0].attributes.address1_city.value;
+                    //alert(firstName);
+                }, onFetchError);
+
+            }
+            catch (err) {
+            }
+
+        }
+
+        function ExecuteFetchXmlRequest(requestXml, successCallback, errorCallBack) {
+            var requestMain = ""
+            requestMain += "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\">";
+            requestMain += "  <s:Body>";
+            requestMain += "    <Execute xmlns=\"http://schemas.microsoft.com/xrm/2011/Contracts/Services\" xmlns:i=\"http://www.w3.org/2001/XMLSchema-instance\">";
+            requestMain += "      <request i:type=\"a:RetrieveMultipleRequest\" xmlns:a=\"http://schemas.microsoft.com/xrm/2011/Contracts\">";
+            requestMain += "        <a:Parameters xmlns:b=\"http://schemas.datacontract.org/2004/07/System.Collections.Generic\">";
+            requestMain += "          <a:KeyValuePairOfstringanyType>";
+            requestMain += "            <b:key>Query</b:key>";
+            requestMain += "            <b:value i:type=\"a:FetchExpression\">";
+            requestMain += "              <a:Query>" + xmlEncode(requestXml) + "</a:Query>";
+            requestMain += "            </b:value>";
+            requestMain += "          </a:KeyValuePairOfstringanyType>";
+            requestMain += "        </a:Parameters>";
+            requestMain += "        <a:RequestId i:nil=\"true\" />";
+            requestMain += "        <a:RequestName>RetrieveMultiple</a:RequestName>";
+            requestMain += "      </request>";
+            requestMain += "    </Execute>";
+            requestMain += "  </s:Body>";
+            requestMain += "</s:Envelope>";
+
+            var req = new XMLHttpRequest();
+            req.open("POST", getServerUrl(), true)
+            // Responses will return XML. It isn't possible to return JSON.
+            req.setRequestHeader("Accept", "application/xml, text/xml, */*");
+            req.setRequestHeader("Content-Type", "text/xml; charset=utf-8");
+            req.setRequestHeader("SOAPAction", "http://schemas.microsoft.com/xrm/2011/Contracts/Services/IOrganizationService/Execute");
+            //var successCallback = null;
+            //var errorCallback = null;
+            req.onreadystatechange = function () { ExecuteFetchXmlResponse(req, successCallback, errorCallback); };
+            req.send(requestMain);
+        }
+
+        function ExecuteFetchXmlResponse (req, successCallback, errorCallback) {
+            if (req.readyState == 4) {
+                if (req.status == 200) {
+                    if (successCallback != null)
+                    { successCallback(req.responseXML); }  // need to parse that xml response and retun entities
+                    //alert(req.responseXML.xml);
+                }
+                else {
+                    errorCallback(onFetchError(req));
+                }
+            }
+        }
+
+        function onFetchError(xhr, status, errorThrown) {
+            var errormsg = $(xhr.responseXML).find('Message').text();
+
+            //alert('CrmFetchKit-Error occured: ' +  errormsg);
+        }
+
+        function xmlEncode(strInput) {
+
+            var c,
+                encoded = '';
+
+            if (strInput === null) {
+                return null;
+            }
+            if (strInput === '') {
+                return '';
+            }
+
+            for (var cnt = 0, max = strInput.length; cnt < max; cnt++) {
+
+                c = strInput.charCodeAt(cnt);
+
+                if (((c > 96) && (c < 123))
+                    || ((c > 64) && (c < 91))
+                    || (c === 32)
+                    || ((c > 47) && (c < 58))
+                    || (c === 46)
+                    || (c === 44)
+                    || (c === 45)
+                    || (c === 95)) {
+                    encoded = encoded + String.fromCharCode(c);
+                }
+                else {
+                    encoded = encoded + '&#' + c + ';';
+                }
+            }
+
+            return encoded;
+        }
+
+        function getServerUrl() {
+
+            var OrgServicePath = "/XRMServices/2011/Organization.svc/web";
+            var serverUrl = "";
+            if (typeof GetGlobalContext == "function") {
+                var context = GetGlobalContext();
+                serverUrl = context.getServerUrl();
+            }
+            else {
+                if (typeof Xrm.Page.context == "object") {
+                    serverUrl = Xrm.Page.context.getServerUrl();
+                }
+                else { throw new Error("Unable to access the server URL"); }
+            }
+            if (serverUrl.match(/\/$/)) {
+                serverUrl = serverUrl.substring(0, serverUrl.length - 1);
+            }
+            return serverUrl + OrgServicePath;
+        }
+
+        function getParametersFromQuery(query) {
+            var parametersDictionary = new Array();
+            var parameters = query.split('&');
+            for (var i = 0; i < parameters.length; i++) {
+                var keyAndValue = parameters[i].split('=');
+                parametersDictionary[unescape(keyAndValue[0])] = unescape(keyAndValue[1]);
+            }
+            return parametersDictionary;
+        }
+
+        function retrieveFromCrmRestApi(url, callback) {
+            $.ajax({
+                type: "GET",
+                url: GetGlobalContext().getServerUrl() + "/XRMServices/2011/OrganizationData.svc" + url,
+                contentType: "application/json; charset=utf-8",
+                dataType: "json",
+                success: function (data) {
+                    callback(data.d);
+                }
+            });
+        }
+
+        function loadChartFromCrm(callback) {
+            var parameters = getParametersFromQuery(window.location.search.substring(1));
+            parameters = getParametersFromQuery(parameters["data"]);
+
+            var id = parameters["visid"].substr(1, 36);
+            var type = parameters["vistype"];
+            var url = (type == "1111" ? "/SavedQueryVisualizationSet" : "/UserQueryVisualizationSet")
+                + "(guid'" + id + "')?$select=DataDescription,PresentationDescription";
+            retrieveFromCrmRestApi(url, callback);
+        }
+
+        function loadMap() {
+            Microsoft.Maps.loadModule('Microsoft.Maps.Themes.BingTheme', {
+                callback: function () {
+                    var mapOptions =
+                    {
+                        credentials: BingMapsKey,
+                        enableClickableLogo: false,
+                        showDashboard: false,
+                        enableSearchLogo: false,
+                        theme: new Microsoft.Maps.Themes.BingTheme()
+                    }
+
+                    map = new Microsoft.Maps.Map(document.getElementById("mapDiv"), mapOptions);
+                    map.setView({ zoom: 3, center: new Microsoft.Maps.Location(56.130366, -106.346771) })  //default to center on Canada
+                    Microsoft.Maps.loadModule('Microsoft.Maps.Search', { callback: createSearchManager })
+
+                    var parameters = getParametersFromQuery(window.location.search.substring(1));
+                    loadRecords(parameters["typename"]);
+                    //loadChartFromCrm(function(chart) { loadRecords(chart.DataDescription); });
+
+                }
+            });
+        }
+
+    </script>
+    <script>
+        //this is a fetchxml sample from the web to replace fetchkit.js
+        if (typeof (SDK) == "undefined")
+        { SDK = { __namespace: true }; }
+        //This will establish a more unique namespace for functions in this library. This will reduce the 
+        // potential for functions to be overwritten due to a duplicate name when the library is loaded.
+        SDK.SAMPLES = {
+            _getServerUrl: function () {
+                ///<summary>
+                /// Returns the URL for the SOAP endpoint using the context information available in the form
+                /// or HTML Web resource.
+                ///</summary>
+                var OrgServicePath = "/XRMServices/2011/Organization.svc/web";
+                var serverUrl = "";
+                if (typeof GetGlobalContext == "function") {
+                    var context = GetGlobalContext();
+                    serverUrl = context.getServerUrl();
+                }
+                else {
+                    if (typeof Xrm.Page.context == "object") {
+                        serverUrl = Xrm.Page.context.getServerUrl();
+                    }
+                    else { throw new Error("Unable to access the server URL"); }
+                }
+                if (serverUrl.match(/\/$/)) {
+                    serverUrl = serverUrl.substring(0, serverUrl.length - 1);
+                }
+                return serverUrl + OrgServicePath;
+            },
+            ExecuteFetchXmlRequest: function () {
+                var requestMain = ""
+                requestMain += "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\">";
+                requestMain += "  <s:Body>";
+                requestMain += "    <Execute xmlns=\"http://schemas.microsoft.com/xrm/2011/Contracts/Services\" xmlns:i=\"http://www.w3.org/2001/XMLSchema-instance\">";
+                requestMain += "      <request i:type=\"a:RetrieveMultipleRequest\" xmlns:a=\"http://schemas.microsoft.com/xrm/2011/Contracts\">";
+                requestMain += "        <a:Parameters xmlns:b=\"http://schemas.datacontract.org/2004/07/System.Collections.Generic\">";
+                requestMain += "          <a:KeyValuePairOfstringanyType>";
+                requestMain += "            <b:key>Query</b:key>";
+                requestMain += "            <b:value i:type=\"a:FetchExpression\">";
+                requestMain += "              <a:Query>&lt;fetch version='1.0' output-format='xml-platform' mapping='logical' distinct='false'&gt;&lt;entity name='account'&gt;&lt;attribute name='name' /&gt; &lt;attribute name='address1_city' /&gt; &lt;attribute name='primarycontactid' /&gt; &lt;attribute name='telephone1' /&gt; &lt;attribute name='accountid' /&gt; &lt;order attribute='name' descending='false' /&gt; &lt;filter type='and'&gt;&lt;condition attribute='statecode' operator='eq' value='0' /&gt; &lt;/filter&gt;&lt;link-entity name='contact' from='contactid' to='primarycontactid' visible='false' link-type='outer' alias='accountprimarycontactidcontactcontactid'&gt;&lt;attribute name='emailaddress1' /&gt; &lt;/link-entity&gt;&lt;/entity&gt;&lt;/fetch&gt;</a:Query>";
+                requestMain += "            </b:value>";
+                requestMain += "          </a:KeyValuePairOfstringanyType>";
+                requestMain += "        </a:Parameters>";
+                requestMain += "        <a:RequestId i:nil=\"true\" />";
+                requestMain += "        <a:RequestName>RetrieveMultiple</a:RequestName>";
+                requestMain += "      </request>";
+                requestMain += "    </Execute>";
+                requestMain += "  </s:Body>";
+                requestMain += "</s:Envelope>";
+                var req = new XMLHttpRequest();
+                req.open("POST", SDK.SAMPLES._getServerUrl(), true)
+                // Responses will return XML. It isn't possible to return JSON.
+                req.setRequestHeader("Accept", "application/xml, text/xml, */*");
+                req.setRequestHeader("Content-Type", "text/xml; charset=utf-8");
+                req.setRequestHeader("SOAPAction", "http://schemas.microsoft.com/xrm/2011/Contracts/Services/IOrganizationService/Execute");
+                var successCallback = null;
+                var errorCallback = null;
+                req.onreadystatechange = function () { SDK.SAMPLES.ExecuteFetchXmlResponse(req, successCallback, errorCallback); };
+                req.send(requestMain);
+            },
+            ExecuteFetchXmlResponse: function (req, successCallback, errorCallback) {
+                ///<summary>
+                /// Recieves the assign response
+                ///</summary>
+                ///<param name="req" Type="XMLHttpRequest">
+                /// The XMLHttpRequest response
+                ///</param>
+                ///<param name="successCallback" Type="Function">
+                /// The function to perform when an successfult response is returned.
+                /// For this message no data is returned so a success callback is not really necessary.
+                ///</param>
+                ///<param name="errorCallback" Type="Function">
+                /// The function to perform when an error is returned.
+                /// This function accepts a JScript error returned by the _getError function
+                ///</param>
+                if (req.readyState == 4) {
+                    if (req.status == 200) {
+                        //if (successCallback != null)
+                        //{ successCallback(); }
+                        alert(req.responseXML.xml);
+                    }
+                    else {
+                        errorCallback(SDK.SAMPLES._getError(req.responseXML));
+                    }
+                }
+            },
+            _getError: function (faultXml) {
+                ///<summary>
+                /// Parses the WCF fault returned in the event of an error.
+                ///</summary>
+                ///<param name="faultXml" Type="XML">
+                /// The responseXML property of the XMLHttpRequest response.
+                ///</param>
+                var errorMessage = "Unknown Error (Unable to parse the fault)";
+                if (typeof faultXml == "object") {
+                    try {
+                        var bodyNode = faultXml.firstChild.firstChild;
+                        //Retrieve the fault node
+                        for (var i = 0; i < bodyNode.childNodes.length; i++) {
+                            var node = bodyNode.childNodes[i];
+                            //NOTE: This comparison does not handle the case where the XML namespace changes
+                            if ("s:Fault" == node.nodeName) {
+                                for (var j = 0; j < node.childNodes.length; j++) {
+                                    var faultStringNode = node.childNodes[j];
+                                    if ("faultstring" == faultStringNode.nodeName) {
+                                        errorMessage = faultStringNode.text;
+                                        break;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    catch (e) { };
+                }
+                return new Error(errorMessage);
+            },
+            __namespace: true
+        };
+
+
+    </script>
+
+</head>
+
+<body onload="loadMap()">
+    <div class="MicrosoftMap BingTheme MapTypeId_m medium" id="mapDiv">
+    </div>
+</body>
+
+</html>
