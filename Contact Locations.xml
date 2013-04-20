@@ -1,0 +1,10 @@
+<visualization>
+  <visualizationid>{5A74B55D-67A4-E211-8904-78E3B511A629}</visualizationid>
+  <name>Contact Locations</name>
+  <description>Displays Contact locations on a Bing Map</description>
+  <primaryentitytypecode>contact</primaryentitytypecode>
+  <datadescription>contact</datadescription>
+  <presentationdescription>contact</presentationdescription>
+  <isdefault>false</isdefault>
+  <webresourcename>dd_chartMap.html</webresourcename>
+</visualization>

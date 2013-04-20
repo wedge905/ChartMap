@@ -1,0 +1,380 @@
+<html>
+
+<head>
+
+    <title>Locations on Bing Maps</title>
+
+    <script type="text/javascript" src="https://ecn.dev.virtualearth.net/mapcontrol/mapcontrol.ashx?v=7.0&s=1"></script>
+    <script type="text/javascript" src="ClientGlobalContext.js.aspx"></script>
+
+    <script type="text/javascript">
+
+        var configFileName = "dd_chartMapConfig.xml";
+        var BingMapsKey = "";
+        var searchManager = null;
+        var map = null;
+        var locs = [];
+
+        function addPins(entityType, entities) {
+            var i = -1;
+            while (i++ < entities.length - 1) {
+
+                var attributes = parseAttributes(entities[i]);
+                var searchString = attributes.line1 + "," + attributes.city + "," + attributes.province + "," + attributes.postcode;
+                var userData = { name: attributes.accountName, id: attributes.id, address: searchString, type: entityType };
+
+                geocodeRequest(searchString, userData);
+            }
+        }
+
+        function parseAttributes(entity) {
+            var attributes = {};
+            var attributePairs;
+
+            if (typeof entity.getElementsByTagNameNS != "undefined") {
+                attributePairs = entity.getElementsByTagNameNS("http://schemas.microsoft.com/xrm/2011/Contracts", "KeyValuePairOfstringanyType");
+                attributes.id = entity.getElementsByTagNameNS("http://schemas.microsoft.com/xrm/2011/Contracts", "Id")[0].textContent;
+            }
+            else {
+                attributes.id = entity.getElementsByTagName("a:Id")[0].text;
+                attributePairs = entity.getElementsByTagName("a:KeyValuePairOfstringanyType");
+            }
+
+            attributes.line1 = getValue("address1_line1", attributePairs);
+            attributes.city = getValue("address1_city", attributePairs);
+            attributes.province = getValue("address1_stateorprovince", attributePairs);
+            attributes.postcode = getValue("address1_postalcode", attributePairs);
+
+
+            attributes.accountName = getValue("name", attributePairs);
+            if (attributes.accountName == "-")
+                attributes.accountName = getValue("fullname", attributePairs);
+
+            return attributes;
+        }
+
+        function getValue(keyName, attributePairs) {
+            for (var i = 0; i < attributePairs.length; i++) {
+                if (attributePairs[i].childNodes[0].textContent == keyName) {
+                    return attributePairs[i].childNodes[1].textContent;
+                }
+                else if (attributePairs[i].childNodes[0].text == keyName) {
+                    return attributePairs[i].childNodes[1].text;
+                }
+            }
+            return "-";
+        }
+
+        function createSearchManager() {
+            if (!searchManager) {
+                map.addComponent('searchManager', new Microsoft.Maps.Search.SearchManager(map));
+                searchManager = map.getComponent('searchManager');
+            }
+        }
+
+        function geocodeRequest(where, userData) {
+            createSearchManager();
+            var request =
+            {
+                where: where,
+                count: 5,
+                bounds: map.getBounds(),
+                callback: onGeocodeSuccess,
+                errorCallback: function (result, userData) { },
+                userData: userData
+            };
+            searchManager.geocode(request);
+        }
+
+        function onGeocodeSuccess(result, userData) {
+            if (result) {
+                var topResult = result.results && result.results[0];
+                if (topResult) {
+                    var pushpin = new Microsoft.Maps.Pushpin(topResult.location, null);
+                    locs.push(topResult.location);
+                    map.entities.push(pushpin);
+                    map.entities.push(new Microsoft.Maps.Infobox(topResult.location,
+                    {
+                        title: userData.name,
+                        pushpin: pushpin,
+                        description: userData.address,
+                        titleClickHandler: function () {
+                            Xrm.Utility.openEntityForm(userData.type, userData.id, null);
+                        }
+                    }))
+                }
+            }
+            map.setView({ bounds: Microsoft.Maps.LocationRect.fromLocations(locs) });
+        }
+
+        function loadRecords(entity) {
+
+            try {
+                var fetchDecoded;
+                if (parent.effectiveFetchXml) {
+                    fetchDecoded = parent.effectiveFetchXml.getAttribute("value");
+                }
+                else {
+                    fetchDecoded = parent.$find("crmGrid").GetParameter("effectiveFetchXml");
+                }
+
+                var fetchXML;
+                var filterText = "";
+                var orderText = "";
+
+                if (window.DOMParser) {
+                    var parser = new DOMParser();
+                    fetchXML = parser.parseFromString(fetchDecoded, "text/xml");
+
+                    var filterXML = fetchXML.getElementsByTagName("filter");
+                    var orderXML = fetchXML.getElementsByTagName("order");
+
+                    for (var k = 0; k < filterXML.length; k++) {
+                        filterText += (new XMLSerializer()).serializeToString(filterXML[k]);
+                    }
+
+                    for (var j = 0; j < orderXML.length; j++) {
+                        orderText += (new XMLSerializer()).serializeToString(orderXML[j]);
+                    }
+                }
+                else { //Older Internet Explorer
+                    fetchXML = new ActiveXObject("Microsoft.XMLDOM");
+                    fetchXML.async = false;
+                    fetchXML.loadXML(fetchDecoded);
+
+                    var filterXML = fetchXML.selectNodes("//filter");
+                    var orderXML = fetchXML.selectNodes("//order");
+
+                    for (var k = 0; k < filterXML.length; k++) {
+                        filterText += filterXML[k].xml;
+                    }
+                    for (var j = 0; j < orderXML.length; j++) {
+                        orderText += orderXML[j].xml;
+                    }
+                }
+
+                var entityname = "";
+                if (entity == "contact" || entity == "lead") {
+                    entityname = "fullname";
+                }
+                else {
+                    entityname = "name";
+                }
+
+                var fetchPage = fetchXML.firstChild.getAttribute("page");
+                var fetchCount = fetchXML.firstChild.getAttribute("count");
+                fetchCount = parseInt(fetchCount) <= 250 ? fetchCount : "50";
+                var fetchHeader = '<fetch version="1.0" output-format="xml-platform"' + ' mapping="logical"' + ' count="' + fetchCount + '" page="' + fetchPage + '">';
+                var fetchEntity = ' <entity name="' + entity + '">' + ' <attribute name="' + entityname + '" />';
+                var fetchAttributes = ' <attribute name="address1_city" />' + ' <attribute name="address1_line1" />' + ' <attribute name="address1_stateorprovince" />' + ' <attribute name="address1_postalcode" />';
+                var fetchFooter = ' </entity>' + '</fetch>';
+
+                var myfetchxml = fetchHeader + fetchEntity + fetchAttributes + filterText + orderText + fetchFooter;
+
+                ExecuteFetchXmlRequest(myfetchxml, function (response) {
+                    if (typeof response.getElementsByTagNameNS !== "undefined") {
+                        addPins(entity, response.getElementsByTagNameNS("http://schemas.microsoft.com/xrm/2011/Contracts", "Entity"));
+                    }
+                    else {
+                        addPins(entity, response.getElementsByTagName("a:Entity"));
+                    }
+
+                }, function () { });
+            }
+            catch (err) {
+            }
+        }
+
+        function ExecuteFetchXmlRequest(requestXml, successCallback, errorCallback) {
+            var requestMain = ""
+            requestMain += "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\">";
+            requestMain += "  <s:Body>";
+            requestMain += "    <Execute xmlns=\"http://schemas.microsoft.com/xrm/2011/Contracts/Services\" xmlns:i=\"http://www.w3.org/2001/XMLSchema-instance\">";
+            requestMain += "      <request i:type=\"a:RetrieveMultipleRequest\" xmlns:a=\"http://schemas.microsoft.com/xrm/2011/Contracts\">";
+            requestMain += "        <a:Parameters xmlns:b=\"http://schemas.datacontract.org/2004/07/System.Collections.Generic\">";
+            requestMain += "          <a:KeyValuePairOfstringanyType>";
+            requestMain += "            <b:key>Query</b:key>";
+            requestMain += "            <b:value i:type=\"a:FetchExpression\">";
+            requestMain += "              <a:Query>" + encodeXml(requestXml) + "</a:Query>";
+            requestMain += "            </b:value>";
+            requestMain += "          </a:KeyValuePairOfstringanyType>";
+            requestMain += "        </a:Parameters>";
+            requestMain += "        <a:RequestId i:nil=\"true\" />";
+            requestMain += "        <a:RequestName>RetrieveMultiple</a:RequestName>";
+            requestMain += "      </request>";
+            requestMain += "    </Execute>";
+            requestMain += "  </s:Body>";
+            requestMain += "</s:Envelope>";
+
+            var req = new XMLHttpRequest();
+            req.open("POST", GetGlobalContext().getClientUrl() + "/XRMServices/2011/Organization.svc/web", true)
+            req.setRequestHeader("Accept", "application/xml, text/xml, */*");
+            req.setRequestHeader("Content-Type", "text/xml; charset=utf-8");
+            req.setRequestHeader("SOAPAction", "http://schemas.microsoft.com/xrm/2011/Contracts/Services/IOrganizationService/Execute");
+
+            req.onreadystatechange = function () {
+                if (req.readyState == 4) {
+                    if (req.status == 200) {
+                        if (successCallback != null)
+                        { successCallback(req.responseXML); }
+                    }
+                    else {
+                        errorCallback(req);
+                    }
+                }
+            };
+            req.send(requestMain);
+        }
+
+        function encodeXml(strInput) {
+            var div = document.createElement('div');
+            div.appendChild(document.createTextNode(strInput));
+
+            return div.innerHTML;
+        }
+
+        function getParametersFromQuery(query) {
+            var parametersDictionary = new Array();
+            var parameters = query.split('&');
+            for (var i = 0; i < parameters.length; i++) {
+                var keyAndValue = parameters[i].split('=');
+                parametersDictionary[unescape(keyAndValue[0])] = unescape(keyAndValue[1]);
+            }
+            return parametersDictionary;
+        }
+
+        function loadMap() {
+
+            retrieveConfigFile();
+
+            
+        }
+
+        function retrieveConfigFile() {
+
+            var requestQuery = Xrm.Page.context.getClientUrl() + "/XRMServices/2011/OrganizationData.svc/"
+                + "WebResourceSet?$select=Name,Content,WebResourceId&$filter=Name eq '" + configFileName + "'&$top=1";
+            var req = new XMLHttpRequest();
+            req.open("GET", requestQuery, true);
+            req.setRequestHeader("Accept", "application/xml, text/xml, */*");
+            req.setRequestHeader("Content-Type", "text/xml; charset=utf-8");
+            req.onreadystatechange = function () {
+                if (this.readyState == 4 /* complete */) {
+                    req.onreadystatechange = null;
+                    if (this.status == 200) {
+                        var returned;
+                        if (typeof req.responseXML.getElementsByTagNameNS !== "undefined") {
+                            returned = req.responseXML.getElementsByTagNameNS("http://schemas.microsoft.com/ado/2007/08/dataservices/metadata", "properties")[0];
+                        }
+                        else {
+                            returned = req.responseXML.getElementsByTagName("m:properties")[0];
+                        }
+                        parseConfigFile(returned);
+                    }
+                    else {
+                        //error
+                    }
+                }
+            };
+            req.send();
+        }
+
+        function decode64(input) {
+            var keyStr = "ABCDEFGHIJKLMNOP" +
+                       "QRSTUVWXYZabcdef" +
+                       "ghijklmnopqrstuv" +
+                       "wxyz0123456789+/" +
+                       "=";
+
+            var output = "";
+            var chr1, chr2, chr3 = "";
+            var enc1, enc2, enc3, enc4 = "";
+            var i = 0;
+
+            // remove all characters that are not A-Z, a-z, 0-9, +, /, or =
+            var base64test = /[^A-Za-z0-9\+\/\=]/g;
+            if (base64test.exec(input)) {
+                alert("There were invalid base64 characters in the input text.\n" +
+                      "Valid base64 characters are A-Z, a-z, 0-9, '+', '/',and '='\n" +
+                      "Expect errors in decoding.");
+            }
+            input = input.replace(/[^A-Za-z0-9\+\/\=]/g, "");
+
+            do {
+                enc1 = keyStr.indexOf(input.charAt(i++));
+                enc2 = keyStr.indexOf(input.charAt(i++));
+                enc3 = keyStr.indexOf(input.charAt(i++));
+                enc4 = keyStr.indexOf(input.charAt(i++));
+
+                chr1 = (enc1 << 2) | (enc2 >> 4);
+                chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
+                chr3 = ((enc3 & 3) << 6) | enc4;
+
+                output = output + String.fromCharCode(chr1);
+
+                if (enc3 != 64) {
+                    output = output + String.fromCharCode(chr2);
+                }
+                if (enc4 != 64) {
+                    output = output + String.fromCharCode(chr3);
+                }
+
+                chr1 = chr2 = chr3 = "";
+                enc1 = enc2 = enc3 = enc4 = "";
+
+            } while (i < input.length);
+
+            var doc;
+            if (window.ActiveXObject) {
+                doc = new ActiveXObject('Microsoft.XMLDOM');
+                doc.async = 'false';
+                doc.loadXML(unescape(output));
+            } else {
+                var parser = new DOMParser();
+                doc = parser.parseFromString(unescape(output), 'text/xml');
+            }
+
+            return doc;
+        }
+
+        function parseConfigFile(responseXML) {
+            if (typeof responseXML.getElementsByTagNameNS !== "undefined") {
+                var configXMLContent = decode64(responseXML.getElementsByTagNameNS("http://schemas.microsoft.com/ado/2007/08/dataservices", "Content")[0].textContent);
+                BingMapsKey = configXMLContent.getElementsByTagName("bingkey")[0].textContent;
+            }
+            else {
+                var configXMLContent = decode64(responseXML.getElementsByTagName("d:Content")[0].text);
+                BingMapsKey = configXMLContent.getElementsByTagName("bingkey")[0].text;
+            }
+
+            Microsoft.Maps.loadModule('Microsoft.Maps.Themes.BingTheme', {
+                callback: function () {
+                    var mapOptions =
+                    {
+                        credentials: BingMapsKey,
+                        enableClickableLogo: false,
+                        showDashboard: false,
+                        enableSearchLogo: false,
+                        theme: new Microsoft.Maps.Themes.BingTheme()
+                    }
+
+                    map = new Microsoft.Maps.Map(document.getElementById("mapDiv"), mapOptions);
+                    map.setView({ zoom: 3, center: new Microsoft.Maps.Location(56.130366, -106.346771) })
+                    Microsoft.Maps.loadModule('Microsoft.Maps.Search', { callback: createSearchManager })
+
+                    var parameters = getParametersFromQuery(window.location.search.substring(1));
+                    loadRecords(parameters["typename"]);
+                }
+            });
+        }
+
+    </script>
+
+</head>
+
+<body onload="loadMap()">
+    <div class="MicrosoftMap BingTheme MapTypeId_m medium" id="mapDiv">
+    </div>
+</body>
+
+</html>
