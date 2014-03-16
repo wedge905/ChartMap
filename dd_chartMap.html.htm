@@ -10,6 +10,7 @@
     <script type="text/javascript">
 
         var configFileName = "dd_chartMapConfig.xml";
+        var attributeList = ["address1_city", "address1_line1", "address1_stateorprovince", "address1_postalcode"];
         var BingMapsKey = "";
         var searchManager = null;
         var map = null;
@@ -110,68 +111,65 @@
         function loadRecords(entity) {
 
             try {
-                var fetchDecoded;
+                var fetchString;
                 if (parent.effectiveFetchXml) {
-                    fetchDecoded = parent.effectiveFetchXml.getAttribute("value");
+                    fetchString = parent.effectiveFetchXml.getAttribute("value");
                 }
                 else {
-                    fetchDecoded = parent.$find("crmGrid").GetParameter("effectiveFetchXml");
+                    fetchString = parent.$find("crmGrid").GetParameter("effectiveFetchXml");
                 }
 
                 var fetchXML;
-                var filterText = "";
-                var orderText = "";
 
+                if (entity == "contact" || entity == "lead") {
+                    attributeList.push("fullname");
+                }
+                else {
+                    attributeList.push("name");
+                }
+                
                 if (window.DOMParser) {
                     var parser = new DOMParser();
-                    fetchXML = parser.parseFromString(fetchDecoded, "text/xml");
+                    fetchXML = parser.parseFromString(fetchString, "text/xml");
 
-                    var filterXML = fetchXML.getElementsByTagName("filter");
-                    var orderXML = fetchXML.getElementsByTagName("order");
-
-                    for (var k = 0; k < filterXML.length; k++) {
-                        filterText += (new XMLSerializer()).serializeToString(filterXML[k]);
+                    while (fetchXML.firstChild.firstChild.getElementsByTagName("attribute").length > 0)
+                    {
+                        if (fetchXML.firstChild.firstChild.getElementsByTagName("attribute")[0].parentNode == fetchXML.firstChild.firstChild) {
+                            fetchXML.firstChild.firstChild.removeChild(fetchXML.firstChild.firstChild.getElementsByTagName("attribute")[0]);
+                        }
+                        else {
+                            fetchXML.firstChild.firstChild.removeChild(fetchXML.firstChild.firstChild.getElementsByTagName("attribute")[0].parentNode);
+                        }
                     }
 
-                    for (var j = 0; j < orderXML.length; j++) {
-                        orderText += (new XMLSerializer()).serializeToString(orderXML[j]);
+                    var attributes = new Array();
+
+                    for (var i = 0; i < attributeList.length; i++) {
+                        attributes[i] = fetchXML.createElement("attribute");
+                        attributes[i].setAttribute("name", attributeList[i]);
+
+                        fetchXML.firstChild.firstChild.appendChild(attributes[i]);
                     }
                 }
                 else { //Older Internet Explorer
                     fetchXML = new ActiveXObject("Microsoft.XMLDOM");
                     fetchXML.async = false;
-                    fetchXML.loadXML(fetchDecoded);
+                    fetchXML.loadXML(fetchString);
 
-                    var filterXML = fetchXML.selectNodes("//filter");
-                    var orderXML = fetchXML.selectNodes("//order");
+                    //var filterXML = fetchXML.selectNodes("//filter");
+                    //var orderXML = fetchXML.selectNodes("//order");
 
-                    for (var k = 0; k < filterXML.length; k++) {
-                        filterText += filterXML[k].xml;
-                    }
-                    for (var j = 0; j < orderXML.length; j++) {
-                        orderText += orderXML[j].xml;
-                    }
+                    //for (var k = 0; k < filterXML.length; k++) {
+                    //    filterText += filterXML[k].xml;
+                    //}
+                    //for (var j = 0; j < orderXML.length; j++) {
+                    //    orderText += orderXML[j].xml;
+                    //}
                 }
 
-                var entityname = "";
-                if (entity == "contact" || entity == "lead") {
-                    entityname = "fullname";
-                }
-                else {
-                    entityname = "name";
-                }
+                var myfetchXml = (new XMLSerializer()).serializeToString(fetchXML);
 
-                var fetchPage = fetchXML.firstChild.getAttribute("page");
-                var fetchCount = fetchXML.firstChild.getAttribute("count");
-                fetchCount = parseInt(fetchCount) <= 250 ? fetchCount : "50";
-                var fetchHeader = '<fetch version="1.0" output-format="xml-platform"' + ' mapping="logical"' + ' count="' + fetchCount + '" page="' + fetchPage + '">';
-                var fetchEntity = ' <entity name="' + entity + '">' + ' <attribute name="' + entityname + '" />';
-                var fetchAttributes = ' <attribute name="address1_city" />' + ' <attribute name="address1_line1" />' + ' <attribute name="address1_stateorprovince" />' + ' <attribute name="address1_postalcode" />';
-                var fetchFooter = ' </entity>' + '</fetch>';
-
-                var myfetchxml = fetchHeader + fetchEntity + fetchAttributes + filterText + orderText + fetchFooter;
-
-                ExecuteFetchXmlRequest(myfetchxml, function (response) {
+                ExecuteFetchXmlRequest(myfetchXml, function (response) {
                     if (typeof response.getElementsByTagNameNS !== "undefined") {
                         addPins(entity, response.getElementsByTagNameNS("http://schemas.microsoft.com/xrm/2011/Contracts", "Entity"));
                     }
@@ -247,11 +245,10 @@
 
             retrieveConfigFile();
 
-            
+
         }
 
         function retrieveConfigFile() {
-
             var requestQuery = Xrm.Page.context.getClientUrl() + "/XRMServices/2011/OrganizationData.svc/"
                 + "WebResourceSet?$select=Name,Content,WebResourceId&$filter=Name eq '" + configFileName + "'&$top=1";
             var req = new XMLHttpRequest();
@@ -338,9 +335,12 @@
         }
 
         function parseConfigFile(responseXML) {
-            if (typeof responseXML.getElementsByTagNameNS !== "undefined") {
+            if (typeof responseXML.getElementsByTagNameNS !== "undefined") {  // IE8 breaks at this line - known issue
                 var configXMLContent = decode64(responseXML.getElementsByTagNameNS("http://schemas.microsoft.com/ado/2007/08/dataservices", "Content")[0].textContent);
-                BingMapsKey = configXMLContent.getElementsByTagName("bingkey")[0].textContent;
+                if (typeof configXMLContent.getElementsByTagName("bingkey")[0].textContent !== "undefined")
+                    BingMapsKey = configXMLContent.getElementsByTagName("bingkey")[0].textContent;
+                else
+                    BingMapsKey = configXMLContent.getElementsByTagName("bingkey")[0].text;
             }
             else {
                 var configXMLContent = decode64(responseXML.getElementsByTagName("d:Content")[0].text);
